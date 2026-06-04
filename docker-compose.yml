@@ -1,0 +1,7 @@
+  transcribe-app:
+    build: .
+    container_name: handwriting-text-recognition-container
+    restart: unless-stopped
+    volumes:
+      - .:/app
+      - /home/marcel/Dokumente/Scans:/data
