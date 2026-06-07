@@ -6,3 +6,6 @@ services:
     volumes:
       - .:/app
       - /home/marcel/Dokumente/Scans:/data
+    # Allows the container to connect to host services like Ollama via host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
