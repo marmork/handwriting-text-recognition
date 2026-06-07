@@ -9,8 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set the working directory inside the container
 WORKDIR /app
 
-# Upgrade pip beforehand
-RUN pip install --no-cache-dir --upgrade pip
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip -r requirements.txt
 
 # Keep the container running so we can execute scripts inside it later
 CMD ["tail", "-f", "/dev/null"]
