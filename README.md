@@ -25,6 +25,7 @@ Since the host environment requires root privileges for Docker, run the setup wi
 
 ```bash
 sudo docker compose up -d --build
+sudo docker compose build --no-cache && sudo docker compose up -d
 ```
 
 3. Verify the Setup
