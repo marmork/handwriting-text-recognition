@@ -1,3 +1,4 @@
+services:
   transcribe-app:
     build: .
     container_name: handwriting-text-recognition-container
