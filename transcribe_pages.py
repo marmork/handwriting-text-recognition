@@ -5,12 +5,11 @@ import requests
 
 # Define paths inside the container
 DATA_DIR = Path("/data")
-PAGES_DIR = DATA_DIR / "Transkriptionen" / "sample" / "pages"
-OUTPUT_DIR = DATA_DIR / "Transkriptionen" / "sample"
+DOCUMENT_DIR = DATA_DIR / "Transkriptionen" / "sample"
+PAGES_DIR = DOCUMENT_DIR / "pages"
 
-# Standard multimodal chat endpoint for Ollama
+# Llama 3.2 Vision handles multimodal chat via /api/chat smoothly
 OLLAMA_URL = "http://host.docker.internal:11434/api/chat"
-# Change from minicpm-v:latest to llama3.2-vision
 MODEL_NAME = "llama3.2-vision"
 
 
@@ -20,62 +19,83 @@ def encode_image_to_base64(image_path: Path) -> str:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
-def transcribe_page(image_filename: str) -> None:
-    image_path = PAGES_DIR / image_filename
-
-    if not image_path.exists():
-        print(f"Error: Image not found at {image_path}")
+def transcribe_batch() -> None:
+    if not PAGES_DIR.exists():
+        print(f"Error: Pages directory not found at {PAGES_DIR}")
+        print("Please run extract_pages.py first.")
         sys.exit(1)
 
-    print(f"Encoding {image_filename}...")
-    base64_image = encode_image_to_base64(image_path)
+    # Find and sort all jpeg pages numerically (page_001.jpg, page_002.jpg, etc.)
+    image_paths = sorted(list(PAGES_DIR.glob("page_*.jpg")))
+    total_pages = len(image_paths)
 
-    # Prompt optimized for strict handwriting transcription
-    prompt = (
-        "Transcribe the handwritten text in this image accurately. "
-        "Maintain the original formatting, line breaks, and structure where possible. "
-        "Do not add any explanations, commentary, or introduction—output ONLY the transcribed text."
-    )
+    if total_pages == 0:
+        print(f"No pages found in {PAGES_DIR}")
+        sys.exit(0)
 
-    # Structure strictly required by Ollama's vision architecture
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-                "images": [base64_image]
+    print(f"Found {total_pages} pages to transcribe using {MODEL_NAME}.")
+    print("Starting batch process. This will run entirely in the background...\n")
+
+    # Final combined output file path
+    output_combined_file = DOCUMENT_DIR / "complete_transcription.md"
+
+    # Open the file in write mode to clear past attempts, then we append
+    with open(output_combined_file, "w", encoding="utf-8") as f_out:
+        f_out.write(f"# Transcription: sample.pdf\n\n")
+
+    # Loop through each page
+    for idx, image_path in enumerate(image_paths, start=1):
+        print(f"[{idx}/{total_pages}] Processing {image_path.name}...")
+
+        try:
+            base64_image = encode_image_to_base64(image_path)
+
+            # Context-focused prompt for dense handwriting + sociology definitions
+            prompt = (
+                "Transcribe the handwritten text in this image accurately. "
+                "The text contains academic notes in a mix of German and English. "
+                "Maintain the original formatting, line breaks, and structural layout where possible. "
+                "Do not add any explanations, commentary, or introduction—output ONLY the transcribed text verbatim."
+            )
+
+            payload = {
+                "model": MODEL_NAME,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                        "images": [base64_image]
+                    }
+                ],
+                "stream": False
             }
-        ],
-        "stream": False
-    }
 
-    print(f"Sending {image_filename} to Ollama ({MODEL_NAME})... This might take a moment.")
+            # Request without timeout constraint to allow deep CPU layer offloading calculations
+            response = requests.post(OLLAMA_URL, json=payload, timeout=None)
+            response.raise_for_status()
 
-    try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=180)
-        response.raise_for_status()
+            result = response.json()
+            transcription = result.get("message", {}).get("content", "").strip()
 
-        result = response.json()
-        # Parse the structured chat response content
-        transcription = result.get("message", {}).get("content", "")
+            # Append this page's result to the combined file
+            with open(output_combined_file, "a", encoding="utf-8") as f_out:
+                f_out.write(f"## --- PAGE {idx} ---\n\n")
+                if transcription:
+                    f_out.write(f"{transcription}\n\n")
+                else:
+                    f_out.write(f"* [Warning: Empty response returned for page {idx}] *\n\n")
 
-        # Save transcription to a markdown file next to the pages folder
-        output_file = OUTPUT_DIR / f"{image_path.stem}.md"
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(transcription)
+            print(f" ✅ Finished page {idx} successfully.")
 
-        print(f"\n--- Transcription for {image_filename} ---")
-        print(transcription)
-        print(f"----------------------------------------")
-        print(f"Saved to: {output_file}\n")
+        except requests.exceptions.RequestException as e:
+            print(f" ❌ Failed page {idx} due to connection error: {e}")
+            with open(output_combined_file, "a", encoding="utf-8") as f_out:
+                f_out.write(f"## --- PAGE {idx} ---\n\n❌ Error processing page: {e}\n\n")
+        except Exception as e:
+            print(f" ❌ Unexpected error on page {idx}: {e}")
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error communicating with Ollama API: {e}")
-        if response := getattr(e, 'response', None):
-            print(f"Server Response Content: {response.text}")
+    print(f"\nAll done! Full combined notes saved to: {output_combined_file}")
 
 
 if __name__ == "__main__":
-    # Test with the very first page extracted
-    transcribe_page("page_001.jpg")
+    transcribe_batch()
