@@ -3,6 +3,8 @@ services:
     build: .
     container_name: handwriting-text-recognition-container
     restart: unless-stopped
+    # Tells the container process to run using your exact host UID and GID
+    user: "1000:1000"
     volumes:
       - .:/app
       - /home/marcel/Dokumente/Scans:/data
