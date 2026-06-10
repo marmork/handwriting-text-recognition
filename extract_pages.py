@@ -7,23 +7,22 @@ DATA_DIR = Path("/data")
 OUTPUT_BASE_DIR = DATA_DIR / "Transkriptionen"
 
 
-def extract_pdf_pages(pdf_filename: str) -> None:
-    pdf_path = DATA_DIR / pdf_filename
-
+def extract_pdf_pages(pdf_path: Path) -> None:
+    """Converts a single PDF file into high-quality page images."""
     if not pdf_path.exists():
         print(f"Error: File not found at {pdf_path}")
-        sys.exit(1)
+        return
 
     # Create a specific output folder for this document's images
     document_name = pdf_path.stem
     output_dir = OUTPUT_BASE_DIR / document_name / "pages"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Processing '{pdf_filename}'...")
-    print(f"Extracting pages to: {output_dir}")
+    print(f"\nProcessing '{pdf_path.name}'...")
+    print(f"  Extracting pages to: {output_dir}")
 
-    # Convert PDF to a list of PIL Images (200 DPI is a sweet spot for HTR/OCR)
     try:
+        # Convert PDF to a list of PIL Images (200 DPI for HTR/OCR)
         pages = convert_from_path(pdf_path, dpi=200)
 
         for index, page in enumerate(pages, start=1):
@@ -32,14 +31,32 @@ def extract_pdf_pages(pdf_filename: str) -> None:
 
             # Save the image as JPEG
             page.save(image_path, "JPEG", quality=90)
-            print(f" Saved: {image_filename}")
+            print(f"   Saved: {image_filename}")
 
-        print(f"\nSuccess! Extracted {len(pages)} pages.")
+        print(f"  Success! Extracted {len(pages)} pages.")
 
     except Exception as e:
-        print(f"An error occurred during conversion: {e}")
+        print(f"  An error occurred during conversion: {e}")
 
 
 if __name__ == "__main__":
-    # For now, we look for a file named 'sample.pdf' in your Scans folder
-    extract_pdf_pages("sample.pdf")
+    # Case 1: A specific filename was passed as an argument
+    if len(sys.argv) > 1:
+        target_filename = sys.argv[1]
+        target_path = DATA_DIR / target_filename
+        extract_pdf_pages(target_path)
+
+    # Case 2: No argument passed -> Batch process all PDFs in directory
+    else:
+        print(f"Scanning '{DATA_DIR}' for PDF files...")
+        pdf_files = sorted(list(DATA_DIR.glob("*.pdf")))
+
+        if not pdf_files:
+            print("No PDF files found to process.")
+            sys.exit(0)
+
+        print(f"Found {len(pdf_files)} PDF(s) to extract.")
+        for pdf_path in pdf_files:
+            extract_pdf_pages(pdf_path)
+
+        print("\nAll PDF extractions completed.")
