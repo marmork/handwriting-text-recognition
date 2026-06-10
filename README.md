@@ -6,8 +6,13 @@ A local, Docker-based workflow to process scanned handwritten PDF documents and 
 
 * `Dockerfile`: Defines the Debian 13 (Trixie) Python environment and installs tools like `poppler-utils` for PDF-to-image conversion.
 * `docker-compose.yml`: Handles container orchestration and mounts local development files and scan directories.
-* `extract_pages.py`: Python script to split PDF documents into high-quality JPEG images at 200 DPI.
-* `transcribe_pages.py`: Python script to send processed page images to a local Ollama service for multimodal transcription.
+* `requirements.txt`: Lists explicit Python dependencies (`pdf2image`,
+  `Pillow`, `mistralai`).
+* `extract_pages.py`: Converts PDF documents into high-quality JPEG images.
+* `transcribe_pages.py`: Transcribes extracted page images via the Mistral AI
+  API.
+* `run_pipeline.py`: The entry-point wrapper script that combines extraction
+  and transcription into a single execution step.
 
 ## Directory Mapping
 
@@ -19,25 +24,60 @@ The container maps your host directories as follows:
 
 ## Getting Started
 
-### 1. Prerequisites
+### 1. Environment Configuration
 
-Ensure you have Docker and Docker Compose installed on your host system.
+Before launching the services, you must provide your API authorization.
+Create a file named `.env` in the project root directory and add your key:
+
+```env
+MISTRAL_API_KEY=your_actual_api_key_here
+```
 
 ### 2. Build and Start the Container
 
-Since the host environment requires root privileges for Docker, run the setup with `sudo`: `sudo docker compose up -d --build`.
-If you ever need to rebuild the environment from scratch, bypassing the layer cache: `sudo docker compose build --no-cache && sudo docker compose up -d`.
+Build the environment from scratch, bypassing layer caches, and bring the
+container up in detached mode: `sudo docker compose build --no-cache && sudo docker compose up -d`
 
 ### 3. Verify the environment
 
-Check if the container is running successfully: `sudo docker compose ps`. Verify that the container can correctly see your local scan directory mapped to `/data`: `sudo docker compose exec transcribe-app ls -la /data`.
+1. Verify that the container is up and running: `sudo docker compose ps`.   
+2. Confirm that the application can successfully access your API key variable: `sudo docker compose exec transcribe-app printenv MISTRAL_API_KEY`.
+
+---
 
 ## Usage
 
-### 1. Page extraction
+You can execute parts of the workflow independently or use the unified pipeline to run everything end-to-end.
 
-Place a handwritten PDF scan named sample.pdf into your local /home/marcel/Dokumente/Scans/ folder. Run the extraction script to convert it into individual images: `sudo docker compose exec transcribe-app python extract_pages.py`. This generates high-resolution JPEGs under `/data/Transkriptionen/sample/pages/`.
+### 1. The Unified Pipeline (Recommended)
 
-### 2. Running transcription
+Place your handwritten PDF files into `/home/marcel/Dokumente/Scans/`.
 
-Trigger the multimodal pipeline to pass images through minicpm-v via Ollama and create structured Markdown notes: `sudo docker compose exec transcribe-app python transcribe_pages.py`.
+To process all files in the directory automatically: `sudo docker compose exec transcribe-app python run_pipeline.py`
+
+To process one specific file only: `sudo docker compose exec transcribe-app python run_pipeline.py file.pdf`.
+
+The pipeline extracts pages into individual image tracks and compiles a clean, combined transcription file named exactly like your input file (e.g.,
+`file.md`) inside `/data/Transkriptionen/[filename]/`.
+
+### 2. Independent Steps
+
+If you want to perform actions separately, you can invoke the modular component scripts directly.
+
+#### 1. Page extraction
+
+```bash
+# Process all files
+sudo docker compose exec transcribe-app python extract_pages.py
+# Process a single file
+sudo docker compose exec transcribe-app python extract_pages.py file.pdf
+```
+
+#### 2. Cloud transcription
+
+```bash
+# Process all extracted folders
+sudo docker compose exec transcribe-app python transcribe_pages.py
+# Process a single extracted folder
+sudo docker compose exec transcribe-app python transcribe_pages.py file.pdf
+```
