@@ -6,6 +6,8 @@ services:
     volumes:
       - .:/app
       - /home/marcel/Dokumente/Scans:/data
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
     # Allows the container to connect to host services like Ollama via host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
