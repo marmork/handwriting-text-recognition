@@ -21,23 +21,14 @@ The container maps your host directories as follows:
 
 ### 1. Prerequisites
 
-Ensure you have Docker, Docker Compose, and Ollama installed on your host system.
+Ensure you have Docker and Docker Compose installed on your host system.
 
-### 2. Configure Ollama for Container Communication
-
-By default, Ollama only listens on `localhost`. To allow the Docker container to connect, you must expose the service host interface: `sudo systemctl edit ollama.service`  and add the following configuration block:
-```ini
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0"
-```
-Afterwards, run `sudo systemctl daemon-reload && sudo systemctl restart ollama`.
-
-### 3. Build and Start the Container
+### 2. Build and Start the Container
 
 Since the host environment requires root privileges for Docker, run the setup with `sudo`: `sudo docker compose up -d --build`.
 If you ever need to rebuild the environment from scratch, bypassing the layer cache: `sudo docker compose build --no-cache && sudo docker compose up -d`.
 
-### 4. Verify the environment
+### 3. Verify the environment
 
 Check if the container is running successfully: `sudo docker compose ps`. Verify that the container can correctly see your local scan directory mapped to `/data`: `sudo docker compose exec transcribe-app ls -la /data`.
 
