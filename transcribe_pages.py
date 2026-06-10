@@ -1,101 +1,137 @@
 import base64
+import os
 import sys
 from pathlib import Path
-import requests
+from mistralai.client import Mistral
 
 # Define paths inside the container
 DATA_DIR = Path("/data")
-DOCUMENT_DIR = DATA_DIR / "Transkriptionen" / "sample"
-PAGES_DIR = DOCUMENT_DIR / "pages"
+OUTPUT_BASE_DIR = DATA_DIR / "Transkriptionen"
 
-# Llama 3.2 Vision handles multimodal chat via /api/chat smoothly
-OLLAMA_URL = "http://host.docker.internal:11434/api/chat"
-MODEL_NAME = "llama3.2-vision"
+# Read the API key injected by docker-compose from your host .env file
+API_KEY = os.environ.get("MISTRAL_API_KEY")
+MODEL_NAME = "pixtral-12b"
+
+if not API_KEY:
+    print("Error: MISTRAL_API_KEY environment variable is not set.")
+    print("Verify that your .env file exists and compose passes it.")
+    sys.exit(1)
+
+# Initialize the official Mistral client
+client = Mistral(api_key=API_KEY)
 
 
-def encode_image_to_base64(image_path: Path) -> str:
-    """Reads an image file and returns its base64 encoded string."""
+def encode_image_to_base64_url(image_path: Path) -> str:
+    """Reads an image file and returns a formatted base64 Data URL string."""
     with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode("utf-8")
+        encoded = base64.b64encode(image_file.read()).decode("utf-8")
+    return f"data:image/jpeg;base64,{encoded}"
 
 
-def transcribe_batch() -> None:
-    if not PAGES_DIR.exists():
-        print(f"Error: Pages directory not found at {PAGES_DIR}")
+def transcribe_document(doc_dir: Path) -> None:
+    """Transcribes all pages within a specific document directory."""
+    pages_dir = doc_dir / "pages"
+    if not pages_dir.exists():
+        print(f"Error: Pages directory not found at {pages_dir}")
         print("Please run extract_pages.py first.")
-        sys.exit(1)
+        return
 
-    # Find and sort all jpeg pages numerically (page_001.jpg, page_002.jpg, etc.)
-    image_paths = sorted(list(PAGES_DIR.glob("page_*.jpg")))
+    image_paths = sorted(list(pages_dir.glob("page_*.jpg")))
     total_pages = len(image_paths)
 
     if total_pages == 0:
-        print(f"No pages found in {PAGES_DIR}")
-        sys.exit(0)
+        print(f"No pages found in {pages_dir}")
+        return
 
+    print(f"\nProcessing directory: {doc_dir.name}")
     print(f"Found {total_pages} pages to transcribe using {MODEL_NAME}.")
-    print("Starting batch process. This will run entirely in the background...\n")
+    print("Starting pipeline execution...")
 
-    # Final combined output file path
-    output_combined_file = DOCUMENT_DIR / "complete_transcription.md"
+    # Output file is named exactly like the input directory stem
+    output_combined_file = doc_dir / f"{doc_dir.name}.md"
 
-    # Open the file in write mode to clear past attempts, then we append
+    # Using 'w' to fresh-start the file and avoid merge conflicts on re-runs
     with open(output_combined_file, "w", encoding="utf-8") as f_out:
-        f_out.write(f"# Transcription: sample.pdf\n\n")
+        for idx, image_path in enumerate(image_paths, start=1):
+            print(f"[{idx}/{total_pages}] Sending {image_path.name}...")
 
-    # Loop through each page
-    for idx, image_path in enumerate(image_paths, start=1):
-        print(f"[{idx}/{total_pages}] Processing {image_path.name}...")
+            try:
+                base64_data_url = encode_image_to_base64_url(image_path)
 
-        try:
-            base64_image = encode_image_to_base64(image_path)
+                prompt = (
+                    "You are an expert paleographer and academic transcriber. "
+                    "Transcribe the handwritten text in this image accurately "
+                    "verbatim. The text consists of dense academic notes in "
+                    "German and English. Strictly follow these rules:\n"
+                    "1. Maintain all original line breaks, indentations, "
+                    "and vertical layout.\n"
+                    "2. Keep symbols exactly as written (e.g., '->', "
+                    "brackets).\n"
+                    "3. Do not correct typos, shorthand, or grammar.\n"
+                    "4. If a word is completely illegible, use '[?]'.\n"
+                    "5. Output ONLY the raw transcribed text. Do not add "
+                    "any introductory or concluding remarks, metadata, "
+                    "or markdown titles."
+                )
 
-            # Context-focused prompt for dense handwriting + sociology definitions
-            prompt = (
-                "Transcribe the handwritten text in this image accurately. "
-                "The text contains academic notes in a mix of German and English. "
-                "Maintain the original formatting, line breaks, and structural layout where possible. "
-                "Do not add any explanations, commentary, or introduction—output ONLY the transcribed text verbatim."
-            )
-
-            payload = {
-                "model": MODEL_NAME,
-                "messages": [
+                messages = [
                     {
                         "role": "user",
-                        "content": prompt,
-                        "images": [base64_image]
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": base64_data_url}
+                        ]
                     }
-                ],
-                "stream": False
-            }
+                ]
 
-            # Request without timeout constraint to allow deep CPU layer offloading calculations
-            response = requests.post(OLLAMA_URL, json=payload, timeout=None)
-            response.raise_for_status()
+                response = client.chat.complete(
+                    model=MODEL_NAME,
+                    messages=messages
+                )
 
-            result = response.json()
-            transcription = result.get("message", {}).get("content", "").strip()
+                transcription = response.choices[0].message.content.strip()
 
-            # Append this page's result to the combined file
-            with open(output_combined_file, "a", encoding="utf-8") as f_out:
-                f_out.write(f"## --- PAGE {idx} ---\n\n")
                 if transcription:
                     f_out.write(f"{transcription}\n\n")
                 else:
-                    f_out.write(f"* [Warning: Empty response returned for page {idx}] *\n\n")
+                    f_out.write(
+                        f"[Warning: Empty response for page {idx}]\n\n"
+                    )
 
-            print(f" ✅ Finished page {idx} successfully.")
+                print(f"  Finished page {idx} successfully.")
 
-        except requests.exceptions.RequestException as e:
-            print(f" ❌ Failed page {idx} due to connection error: {e}")
-            with open(output_combined_file, "a", encoding="utf-8") as f_out:
-                f_out.write(f"## --- PAGE {idx} ---\n\n❌ Error processing page: {e}\n\n")
-        except Exception as e:
-            print(f" ❌ Unexpected error on page {idx}: {e}")
+            except Exception as e:
+                print(f"  Failed page {idx} due to runtime error: {e}")
+                f_out.write(f"[Error processing page {idx}: {e}]\n\n")
 
-    print(f"\nAll done! Full combined notes saved to: {output_combined_file}")
+    print(f"Completed notes saved to: {output_combined_file}")
 
 
 if __name__ == "__main__":
-    transcribe_batch()
+    # Case 1: A specific filename or folder name was passed as an argument
+    if len(sys.argv) > 1:
+        input_arg = sys.argv[1]
+        doc_name = Path(input_arg).stem
+        target_dir = OUTPUT_BASE_DIR / doc_name
+        transcribe_document(target_dir)
+
+    # Case 2: No argument passed -> Batch process all subdirectories
+    else:
+        print(f"Scanning '{OUTPUT_BASE_DIR}' for extracted documents...")
+        if not OUTPUT_BASE_DIR.exists():
+            print("No extractions found. Please run extract_pages.py first.")
+            sys.exit(0)
+
+        doc_dirs = sorted(
+            [p for p in OUTPUT_BASE_DIR.iterdir() if p.is_dir()]
+        )
+
+        if not doc_dirs:
+            print("No document directories found to process.")
+            sys.exit(0)
+
+        print(f"Found {len(doc_dirs)} document(s) to transcribe.")
+        for target_dir in doc_dirs:
+            transcribe_document(target_dir)
+
+        print("\nAll batch transcriptions completed.")
